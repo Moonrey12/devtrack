@@ -93,6 +93,34 @@ def cmd_task_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         print(f"{t['id']:<4} {t['status']:<12} {t['title']}")
     return 0
         
+def cmd_task_status(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task status`."""
+    task = repositories.get_task(conn, args.task_id)
+    if task is None:
+        print(f"Error: no task with id {args.task_id}.", file=sys.stderr)
+        return 1
+    repositories.update_task_status(conn, args.task_id, args.status)
+    print(f"Task #{task['id']}: {task['status']} -> {args.status}")
+    return 0
+
+
+def cmd_task_delete(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task delete`, asking for confirmation unless --yes is given."""
+    task = repositories.get_task(conn, args.task_id)
+    if task is None:
+        print(f"Error: no task with id {args.task_id}.", file=sys.stderr)
+        return 1
+    if not args.yes:
+        try:
+            answer = input(f"Delete task #{task['id']} '{task['title']}'? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Cancelled.")
+            return 0
+    repositories.delete_task(conn, args.task_id)
+    print(f"Deleted task #{task['id']}: {task['title']}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -133,6 +161,18 @@ def build_parser() -> argparse.ArgumentParser:
     task_list.add_argument("project_id", type=int, help="project id")
     task_list.add_argument("--status", choices=STATUS_CHOICES, help="filter by status")
     task_list.set_defaults(func=cmd_task_list)
+
+    task_status = task_actions.add_parser("status", help="change a task's status")
+    task_status.add_argument("task_id", type=int, help="task id")
+    task_status.add_argument("status", choices=STATUS_CHOICES, help="new status")
+    task_status.set_defaults(func=cmd_task_status)
+
+    task_delete = task_actions.add_parser("delete", help="delete a task")
+    task_delete.add_argument("task_id", type=int, help="task id")
+    task_delete.add_argument(
+        "-y", "--yes", action="store_true", help="skip the confirmation question"
+    )
+    task_delete.set_defaults(func=cmd_task_delete)
 
     return parser
 

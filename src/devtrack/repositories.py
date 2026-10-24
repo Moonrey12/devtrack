@@ -57,5 +57,31 @@ def list_tasks(
         (project_id, status),
     ).fetchall()
 
+def get_task(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row | None:
+    """Return one task by id, or None if it does not exist."""
+    return conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
 
+
+def update_task_status(conn: sqlite3.Connection, task_id: int, status: str) -> bool:
+    """Set a task's status; return True if a task was updated, False if not found."""
+    with conn:
+        if status == "completed":
+            cursor = conn.execute(
+                "UPDATE tasks SET status = ?, completed_at = datetime('now') "
+                "WHERE id = ?",
+                (status, task_id),
+            )
+        else:
+            cursor = conn.execute(
+                "UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?",
+                (status, task_id),
+            )
+    return cursor.rowcount > 0
+
+
+def delete_task(conn: sqlite3.Connection, task_id: int) -> bool:
+    """Delete a task; return True if a task was deleted, False if not found."""
+    with conn:
+        cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    return cursor.rowcount > 0
    
