@@ -28,3 +28,34 @@ def get_project(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None
     return conn.execute(
         "SELECT * FROM projects WHERE id = ?", (project_id,)
     ).fetchone()
+
+
+def add_task(conn: sqlite3.Connection, project_id: int, title: str) -> int:
+    "Insert  a task (status defaults to 'todo) and return its new id."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO tasks(project_id, title) VALUES (?,?)",
+             (project_id, title),
+        )
+    return cursor.lastrowid
+
+def list_tasks(
+    conn: sqlite3.Connection, project_id: int, status: str | None = None 
+    ) -> list[sqlite3.Row]:
+    """Return a project's tasks, ordered by id, optioanlly filtered by status."""
+    if status is None:
+        return conn.execute(
+            "SELECT * FROM tasks WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM tasks where project_id = ? AND status = ? ORDER BY id",
+        (project_id, status),
+     ).fetchall()
+    return conn.execute(
+        "SELECT * FROM tasks WHERE project_id = ? AND status = ? ORDER BY id",
+        (project_id, status),
+    ).fetchall()
+
+
+   

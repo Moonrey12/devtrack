@@ -9,6 +9,7 @@ from pathlib import Path
 from devtrack import repositories
 from devtrack.database import get_connection, init_db
 
+STATUS_CHOICES = ["todo", "in_progress", "completed"]
 
 def get_db_path() -> Path:
     """Return the database path: DEVTRACK_DB if set, else ~/.devtrack/devtrack.db."""
@@ -60,6 +61,39 @@ def cmd_project_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     print(f"  Created:     {project['created_at']}")
     return 0
 
+def cmd_task_add(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task add`."""
+    if repositories.get_project(conn, args.project_id) is None:
+        print(f"Error: no project with id {args.project_id}.", file=sys.stderr)
+        return 1
+    title = args.title.strip()
+    if not title:
+        print("Error: task title cannot be empty.", file=sys.stderr)
+        return 1
+    task_id = repositories.add_task(conn, args.project_id, title)
+    print(f"Added task #{task_id} to project #{args.project_id}: {title}")
+    return 0
+
+
+def cmd_task_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task list`."""
+    project = repositories.get_project(conn, args.project_id)
+    if project is None:
+        print(f"Error: no project with id {args.project_id}.", file=sys.stderr)
+        return 1
+    tasks = repositories.list_tasks(conn, args.project_id, args.status)
+    if not tasks:
+        suffix = f" with status '{args.status}'" if args.status else ""
+        print(f"No tasks{suffix} in project '{project['name']}'.")
+        return 0
+    print(f"Tasks for project #{project['id']}: {project['name']}")
+    print(f"{'ID':<4} {'STATUS':<12} TITLE")
+    print("-" * 50)
+    for t in tasks:
+        print(f"{t['id']:<4} {t['status']:<12} {t['title']}")
+    return 0
+        
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with its subcommands."""
@@ -85,6 +119,20 @@ def build_parser() -> argparse.ArgumentParser:
     show = actions.add_parser("show", help="show one project")
     show.add_argument("project_id", type=int, help="project id")
     show.set_defaults(func=cmd_project_show)
+
+    task = subparsers.add_parser("task", help="manage tasks")
+    task.set_defaults(parser=task, func=None)
+    task_actions = task.add_subparsers(dest="action")
+
+    task_add = task_actions.add_parser("add", help="add a task to a project")
+    task_add.add_argument("project_id", type=int, help="project id")
+    task_add.add_argument("title", help="task title")
+    task_add.set_defaults(func=cmd_task_add)
+
+    task_list = task_actions.add_parser("list", help="list a project's tasks")
+    task_list.add_argument("project_id", type=int, help="project id")
+    task_list.add_argument("--status", choices=STATUS_CHOICES, help="filter by status")
+    task_list.set_defaults(func=cmd_task_list)
 
     return parser
 
