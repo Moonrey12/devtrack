@@ -9,7 +9,25 @@ from pathlib import Path
 from devtrack import repositories
 from devtrack.database import get_connection, init_db
 
+from devtrack.validators import (
+    ValidationError,
+    validate_name,
+    validate_optional_text,
+    validate_title,
+)
+
 STATUS_CHOICES = ["todo", "in_progress", "completed"]
+
+def positive_int(value: str) -> int:
+    """argparse type: accept only whole numbers that are 1 or greater."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{value}' is not a whole number")
+    if number < 1:
+        raise argparse.ArgumentTypeError("id must be 1 or greater")
+    return number
+
 
 def get_db_path() -> Path:
     """Return the database path: DEVTRACK_DB if set, else ~/.devtrack/devtrack.db."""
@@ -21,14 +39,11 @@ def get_db_path() -> Path:
 
 def cmd_project_add(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     """Handle `project add`."""
-    name = args.name.strip()
-    if not name:
-        print("Error: project name cannot be empty.", file=sys.stderr)
-        return 1
+    name = validate_name(args.name)
+    description = validate_optional_text(args.description, "Description")
+    tech_stack = validate_optional_text(args.tech_stack, "Tech stack")
     try:
-        project_id = repositories.add_project(
-            conn, name, args.description, args.tech_stack
-        )
+        project_id = repositories.add_project(conn, name, description, tech_stack)
     except sqlite3.IntegrityError:
         print(f"Error: a project named '{name}' already exists.", file=sys.stderr)
         return 1
@@ -63,12 +78,9 @@ def cmd_project_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
 
 def cmd_task_add(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     """Handle `task add`."""
+    title = validate_title(args.title)
     if repositories.get_project(conn, args.project_id) is None:
         print(f"Error: no project with id {args.project_id}.", file=sys.stderr)
-        return 1
-    title = args.title.strip()
-    if not title:
-        print("Error: task title cannot be empty.", file=sys.stderr)
         return 1
     task_id = repositories.add_task(conn, args.project_id, title)
     print(f"Added task #{task_id} to project #{args.project_id}: {title}")
@@ -145,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     lst.set_defaults(func=cmd_project_list)
 
     show = actions.add_parser("show", help="show one project")
-    show.add_argument("project_id", type=int, help="project id")
+    show.add_argument("project_id", type=positive_int, help="project id")
     show.set_defaults(func=cmd_project_show)
 
     task = subparsers.add_parser("task", help="manage tasks")
@@ -153,22 +165,22 @@ def build_parser() -> argparse.ArgumentParser:
     task_actions = task.add_subparsers(dest="action")
 
     task_add = task_actions.add_parser("add", help="add a task to a project")
-    task_add.add_argument("project_id", type=int, help="project id")
+    task_add.add_argument("project_id", type=positive_int, help="project id")
     task_add.add_argument("title", help="task title")
     task_add.set_defaults(func=cmd_task_add)
 
     task_list = task_actions.add_parser("list", help="list a project's tasks")
-    task_list.add_argument("project_id", type=int, help="project id")
+    task_list.add_argument("project_id", type=positive_int, help="project id")
     task_list.add_argument("--status", choices=STATUS_CHOICES, help="filter by status")
     task_list.set_defaults(func=cmd_task_list)
 
     task_status = task_actions.add_parser("status", help="change a task's status")
-    task_status.add_argument("task_id", type=int, help="task id")
+    task_status.add_argument("task_id", type=positive_int, help="task id")
     task_status.add_argument("status", choices=STATUS_CHOICES, help="new status")
     task_status.set_defaults(func=cmd_task_status)
 
     task_delete = task_actions.add_parser("delete", help="delete a task")
-    task_delete.add_argument("task_id", type=int, help="task id")
+    task_delete.add_argument("task_id", type=positive_int, help="task id")
     task_delete.add_argument(
         "-y", "--yes", action="store_true", help="skip the confirmation question"
     )
@@ -185,14 +197,27 @@ def main(argv: list[str] | None = None) -> int:
         args.parser.print_help()
         return 1
 
-    db_path = get_db_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = get_connection(db_path)
     try:
-        init_db(conn)
-        return args.func(args, conn)
-    finally:
-        conn.close()
+        db_path = get_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = get_connection(db_path)
+        try:
+            init_db(conn)
+            return args.func(args, conn)
+        finally:
+            conn.close()
+    except ValidationError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    except sqlite3.Error as error:
+        print(f"Error: database problem: {error}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"Error: cannot access the database location: {error}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return 130
 
 
 if __name__ == "__main__":
