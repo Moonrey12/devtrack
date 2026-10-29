@@ -106,8 +106,6 @@ def cmd_task_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         print(f"No tasks{suffix} in project '{project['name']}'.")
         return 0
     print(f"Tasks for project #{project['id']}: {project['name']}")
-    print(f"{'ID':<4} {'STATUS':<12} TITLE")
-    print("-" * 50)
     print(f"{'ID':<4} {'STATUS':<12} {'PRIORITY':<9} {'DEADLINE':<11} TITLE")
     print("-" * 60)
     for t in tasks:
@@ -223,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_edit.add_argument(
         "--priority", choices=PRIORITY_CHOICES + ["none"], help="new priority, or 'none' to clear"
     )
-    
+
     task_edit.add_argument("--deadline", help="new due date YYYY-MM-DD, or 'none' to clear")
     task_edit.set_defaults(func=cmd_task_edit)
     task_delete = task_actions.add_parser("delete", help="delete a task")
