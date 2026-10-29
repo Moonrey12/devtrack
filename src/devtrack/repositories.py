@@ -1,7 +1,7 @@
 """SQL access for projects. This module only talks to the database."""
 
 import sqlite3
-
+from datetime import datetime
 
 def add_project(
     conn: sqlite3.Connection,
@@ -30,12 +30,19 @@ def get_project(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None
     ).fetchone()
 
 
-def add_task(conn: sqlite3.Connection, project_id: int, title: str) -> int:
-    "Insert  a task (status defaults to 'todo) and return its new id."""
+def add_task(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str,
+    priority: int | None = None,
+    deadline: str | None = None,
+) -> int:
+    """Insert a task (status defaults to 'todo') and return its new id."""
     with conn:
         cursor = conn.execute(
-            "INSERT INTO tasks(project_id, title) VALUES (?,?)",
-             (project_id, title),
+            "INSERT INTO tasks (project_id, title, priority, deadline) "
+            "VALUES (?, ?, ?, ?)",
+            (project_id, title, priority, deadline),
         )
     return cursor.lastrowid
 
@@ -83,5 +90,19 @@ def delete_task(conn: sqlite3.Connection, task_id: int) -> bool:
     """Delete a task; return True if a task was deleted, False if not found."""
     with conn:
         cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    return cursor.rowcount > 0
+
+def set_task_priority_deadline(
+    conn: sqlite3.Connection,
+    task_id: int,
+    priority: int | None,
+    deadline: str | None,
+) -> bool:
+    """Set a task's priority and deadline (None clears them); True if the task exists."""
+    with conn:
+        cursor = conn.execute(
+            "UPDATE tasks SET priority = ?, deadline = ? WHERE id = ?",
+            (priority, deadline, task_id),
+        )
     return cursor.rowcount > 0
    

@@ -10,13 +10,18 @@ from devtrack import repositories
 from devtrack.database import get_connection, init_db
 
 from devtrack.validators import (
+    PRIORITY_NAMES,
     ValidationError,
+    parse_priority,
+    validate_deadline,
     validate_name,
     validate_optional_text,
     validate_title,
 )
 
 STATUS_CHOICES = ["todo", "in_progress", "completed"]
+
+PRIORITY_CHOICES = ["low", "medium", "high"]
 
 def positive_int(value: str) -> int:
     """argparse type: accept only whole numbers that are 1 or greater."""
@@ -79,10 +84,12 @@ def cmd_project_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
 def cmd_task_add(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     """Handle `task add`."""
     title = validate_title(args.title)
+    priority = parse_priority(args.priority) if args.priority else None
+    deadline = validate_deadline(args.deadline) if args.deadline else None
     if repositories.get_project(conn, args.project_id) is None:
         print(f"Error: no project with id {args.project_id}.", file=sys.stderr)
         return 1
-    task_id = repositories.add_task(conn, args.project_id, title)
+    task_id = repositories.add_task(conn, args.project_id, title, priority, deadline)
     print(f"Added task #{task_id} to project #{args.project_id}: {title}")
     return 0
 
@@ -101,8 +108,38 @@ def cmd_task_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     print(f"Tasks for project #{project['id']}: {project['name']}")
     print(f"{'ID':<4} {'STATUS':<12} TITLE")
     print("-" * 50)
+    print(f"{'ID':<4} {'STATUS':<12} {'PRIORITY':<9} {'DEADLINE':<11} TITLE")
+    print("-" * 60)
     for t in tasks:
-        print(f"{t['id']:<4} {t['status']:<12} {t['title']}")
+        priority = PRIORITY_NAMES.get(t["priority"], "-")
+        deadline = t["deadline"] or "-"
+        print(f"{t['id']:<4} {t['status']:<12} {priority:<9} {deadline:<11} {t['title']}")
+    return 0
+
+
+def cmd_task_edit(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task edit`: change a task's priority and/or deadline."""
+    if args.priority is None and args.deadline is None:
+        print("Error: nothing to change; use --priority and/or --deadline.", file=sys.stderr)
+        return 1
+    priority_value = None
+    deadline_value = None
+    if args.priority is not None and args.priority != "none":
+        priority_value = parse_priority(args.priority)
+    if args.deadline is not None and args.deadline.strip().lower() != "none":
+        deadline_value = validate_deadline(args.deadline)
+    task = repositories.get_task(conn, args.task_id)
+    if task is None:
+        print(f"Error: no task with id {args.task_id}.", file=sys.stderr)
+        return 1
+    # Keep the current value for anything the user did not mention.
+    new_priority = task["priority"] if args.priority is None else priority_value
+    new_deadline = task["deadline"] if args.deadline is None else deadline_value
+    repositories.set_task_priority_deadline(conn, args.task_id, new_priority, new_deadline)
+    print(
+        f"Task #{task['id']}: priority={PRIORITY_NAMES.get(new_priority, '-')}, "
+        f"deadline={new_deadline or '-'}"
+    )
     return 0
         
 def cmd_task_status(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
@@ -167,6 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
     task_add = task_actions.add_parser("add", help="add a task to a project")
     task_add.add_argument("project_id", type=positive_int, help="project id")
     task_add.add_argument("title", help="task title")
+    task_add.add_argument("--priority", choices=PRIORITY_CHOICES, help="low, medium, or high")
+    task_add.add_argument("--deadline", help="due date as YYYY-MM-DD")
     task_add.set_defaults(func=cmd_task_add)
 
     task_list = task_actions.add_parser("list", help="list a project's tasks")
@@ -179,6 +218,14 @@ def build_parser() -> argparse.ArgumentParser:
     task_status.add_argument("status", choices=STATUS_CHOICES, help="new status")
     task_status.set_defaults(func=cmd_task_status)
 
+    task_edit = task_actions.add_parser("edit", help="change a task's priority or deadline")
+    task_edit.add_argument("task_id", type=positive_int, help="task id")
+    task_edit.add_argument(
+        "--priority", choices=PRIORITY_CHOICES + ["none"], help="new priority, or 'none' to clear"
+    )
+    
+    task_edit.add_argument("--deadline", help="new due date YYYY-MM-DD, or 'none' to clear")
+    task_edit.set_defaults(func=cmd_task_edit)
     task_delete = task_actions.add_parser("delete", help="delete a task")
     task_delete.add_argument("task_id", type=positive_int, help="task id")
     task_delete.add_argument(

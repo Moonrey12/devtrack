@@ -90,3 +90,56 @@ def test_data_persists_between_runs(capsys):
 def test_no_arguments_prints_help_and_returns_1(capsys):
     assert main([]) == 1
     assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_add_task_with_priority_and_deadline_shows_in_list(capsys):
+    main(["project", "add", "P"])
+    assert main(["task", "add", "1", "Ship it", "--priority", "high", "--deadline", "2026-12-31"]) == 0
+    capsys.readouterr()
+    assert main(["task", "list", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "high" in out and "2026-12-31" in out and "Ship it" in out
+
+
+def test_task_without_priority_shows_dashes(capsys):
+    main(["project", "add", "P"])
+    main(["task", "add", "1", "Plain"])
+    capsys.readouterr()
+    main(["task", "list", "1"])
+    row = [line for line in capsys.readouterr().out.splitlines() if "Plain" in line][0]
+    assert row.count("-") >= 2
+
+
+def test_bad_deadline_returns_1(capsys):
+    main(["project", "add", "P"])
+    assert main(["task", "add", "1", "x", "--deadline", "2026-02-30"]) == 1
+    assert "YYYY-MM-DD" in capsys.readouterr().err
+
+
+def test_bad_priority_is_usage_error():
+    with pytest.raises(SystemExit) as exc:
+        main(["task", "add", "1", "x", "--priority", "urgent"])
+    assert exc.value.code == 2
+
+
+def test_task_edit_changes_and_clears(capsys):
+    main(["project", "add", "P"])
+    main(["task", "add", "1", "x", "--priority", "low", "--deadline", "2026-11-30"])
+    capsys.readouterr()
+    assert main(["task", "edit", "1", "--priority", "high"]) == 0
+    assert "priority=high" in capsys.readouterr().out
+    assert main(["task", "edit", "1", "--deadline", "none"]) == 0
+    out = capsys.readouterr().out
+    assert "priority=high" in out and "deadline=-" in out
+
+
+def test_task_edit_needs_something_to_change(capsys):
+    main(["project", "add", "P"])
+    main(["task", "add", "1", "x"])
+    assert main(["task", "edit", "1"]) == 1
+    assert "nothing to change" in capsys.readouterr().err
+
+
+def test_task_edit_missing_task_returns_1(capsys):
+    assert main(["task", "edit", "99", "--priority", "high"]) == 1
+    assert "no task with id 99" in capsys.readouterr().err
