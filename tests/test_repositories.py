@@ -103,3 +103,50 @@ def test_set_task_priority_deadline_updates_and_clears(conn):
 
 def test_set_task_priority_deadline_missing_task_returns_false(conn):
     assert repositories.set_task_priority_deadline(conn, 999, 1, None) is False
+
+
+def _titles(rows):
+    return [row["title"] for row in rows]
+
+
+def _seed_search_data(conn):
+    p1 = repositories.add_project(conn, "Alpha", None, None)
+    p2 = repositories.add_project(conn, "Beta", None, None)
+    repositories.add_task(conn, p1, "Write tests")
+    repositories.add_task(conn, p2, "TEST plan")
+    repositories.add_task(conn, p1, "Reach 100% coverage")
+    repositories.add_task(conn, p1, "Handle 1000 users")
+    repositories.add_task(conn, p2, "rename a_b file")
+    repositories.add_task(conn, p2, "rename axb file")
+
+
+def test_search_without_text_returns_all_tasks_across_projects(conn):
+    _seed_search_data(conn)
+    assert len(repositories.search_tasks(conn)) == 6
+
+
+def test_search_matches_title_text_ignoring_case(conn):
+    _seed_search_data(conn)
+    found = repositories.search_tasks(conn, "test")
+    assert _titles(found) == ["Write tests", "TEST plan"]
+
+
+def test_search_results_include_project_name(conn):
+    _seed_search_data(conn)
+    found = repositories.search_tasks(conn, "plan")
+    assert found[0]["project_name"] == "Beta"
+
+
+def test_search_no_match_returns_empty_list(conn):
+    _seed_search_data(conn)
+    assert repositories.search_tasks(conn, "zzz") == []
+
+
+def test_search_treats_percent_literally(conn):
+    _seed_search_data(conn)
+    assert _titles(repositories.search_tasks(conn, "100%")) == ["Reach 100% coverage"]
+
+
+def test_search_treats_underscore_literally(conn):
+    _seed_search_data(conn)
+    assert _titles(repositories.search_tasks(conn, "a_b")) == ["rename a_b file"]

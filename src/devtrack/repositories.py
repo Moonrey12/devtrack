@@ -105,4 +105,26 @@ def set_task_priority_deadline(
             (priority, deadline, task_id),
         )
     return cursor.rowcount > 0
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards (% and _) so the user's text is matched literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search_tasks(
+        conn: sqlite3.Connection, text: str | None = None
+) -> list[sqlite3.Row]:
+    """Return tasks from all projects (with project_name), optionally title-filtered."""
+    query = (
+        "SELECT tasks.*, projects.name AS project_name "
+        "FROM tasks JOIN projects ON projects.id = tasks.project_id"
+        )
+    params: list[object] = []
+    if text:
+        query += " WHERE tasks.title LIKE ? ESCAPE '\\'"
+        params.append(f"%{_escape_like(text)}%")
+    query += " ORDER BY tasks.id"
+    return conn.execute(query, params).fetchall()
+        
    
