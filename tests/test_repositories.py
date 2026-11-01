@@ -150,3 +150,117 @@ def test_search_treats_percent_literally(conn):
 def test_search_treats_underscore_literally(conn):
     _seed_search_data(conn)
     assert _titles(repositories.search_tasks(conn, "a_b")) == ["rename a_b file"]
+
+def _add_task(conn, project_id, title, priority=None, deadline=None, status="todo"):
+    task_id = repositories.add_task(conn, project_id, title, priority, deadline)
+    if status != "todo":
+        repositories.update_task_status(conn, task_id, status)
+    return task_id
+
+
+def _seed_filter_data(conn):
+    a = repositories.add_project(conn, "Alpha", None, None)
+    b = repositories.add_project(conn, "Beta", None, None)
+    _add_task(conn, a, "Fix bug", 3, "2026-11-01")
+    _add_task(conn, a, "Write docs", 1, "2026-12-15")
+    _add_task(conn, a, "Old report", 2, "2026-10-01", "completed")
+    _add_task(conn, a, "No date")
+    _add_task(conn, b, "Deploy app", 3, "2026-11-20", "in_progress")
+    _add_task(conn, b, "Refactor", 1, "2026-09-15", "in_progress")
+    return a, b
+
+
+def test_search_filters_by_project(conn):
+    a, b = _seed_filter_data(conn)
+    assert _titles(repositories.search_tasks(conn, project_id=b)) == ["Deploy app", "Refactor"]
+
+
+def test_search_filters_by_status(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, status="in_progress")
+    assert _titles(found) == ["Deploy app", "Refactor"]
+
+
+def test_search_filters_by_priority(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, priority=3)
+    assert _titles(found) == ["Fix bug", "Deploy app"]
+
+
+def test_search_due_by_is_inclusive_and_skips_tasks_without_deadline(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, due_by="2026-11-20")
+    assert _titles(found) == ["Fix bug", "Old report", "Deploy app", "Refactor"]
+
+
+def test_search_overdue_skips_completed_future_and_undated(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, overdue=True, today="2026-11-10")
+    assert _titles(found) == ["Fix bug", "Refactor"]
+
+
+def test_search_overdue_does_not_include_a_task_due_today(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, overdue=True, today="2026-11-01")
+    assert _titles(found) == ["Refactor"]
+
+
+def test_search_overdue_requires_today(conn):
+    with pytest.raises(ValueError):
+        repositories.search_tasks(conn, overdue=True)
+
+
+def test_search_filters_combine_with_and(conn):
+    a, b = _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, project_id=b, priority=3, status="in_progress")
+    assert _titles(found) == ["Deploy app"]
+
+
+def test_search_text_combines_with_filters(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, "re", priority=1)
+    assert _titles(found) == ["Refactor"]
+
+
+def test_search_default_sort_is_by_id(conn):
+    _seed_filter_data(conn)
+    assert _titles(repositories.search_tasks(conn)) == [
+        "Fix bug", "Write docs", "Old report", "No date", "Deploy app", "Refactor",
+    ]
+
+
+def test_search_sort_by_deadline_earliest_first_and_undated_last(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, sort="deadline")
+    assert _titles(found) == [
+        "Refactor", "Old report", "Fix bug", "Deploy app", "Write docs", "No date",
+    ]
+
+
+def test_search_sort_by_priority_high_first_and_unprioritized_last(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, sort="priority")
+    assert _titles(found) == [
+        "Fix bug", "Deploy app", "Old report", "Write docs", "Refactor", "No date",
+    ]
+
+
+def test_search_sort_by_title_ignores_case(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    for title in ("apple", "Banana", "cherry"):
+        repositories.add_task(conn, project_id, title)
+    found = repositories.search_tasks(conn, sort="title")
+    assert _titles(found) == ["apple", "Banana", "cherry"]
+
+
+def test_search_sort_works_together_with_filters(conn):
+    _seed_filter_data(conn)
+    found = repositories.search_tasks(conn, priority=1, sort="deadline")
+    assert _titles(found) == ["Refactor", "Write docs"]
+
+
+@pytest.mark.parametrize("bad_sort", ["nope", "", "id; DROP TABLE tasks", "tasks.id DESC"])
+def test_search_rejects_unknown_sort(conn, bad_sort):
+    with pytest.raises(ValueError):
+        repositories.search_tasks(conn, sort=bad_sort)
+

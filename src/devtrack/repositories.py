@@ -112,19 +112,64 @@ def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# ORDER BY cannot take ? placeholders, so the allowed sort orders are a fixed
+# allow-list: the user picks a KEY, and the SQL text comes only from this dictionary.
+# "IS NULL" sorts rows with no value after rows that have one.
+SORT_ORDERS = {
+    "id": "tasks.id",
+    "deadline": "tasks.deadline IS NULL, tasks.deadline ASC, tasks.id",
+    "priority": "tasks.priority IS NULL, tasks.priority DESC, tasks.id",
+    "title": "tasks.title COLLATE NOCASE, tasks.id",
+}
+SORT_CHOICES = list(SORT_ORDERS)
+
+
 def search_tasks(
-        conn: sqlite3.Connection, text: str | None = None
+    conn: sqlite3.Connection,
+    text: str | None = None,
+    *,
+    project_id: int | None = None,
+    status: str | None = None,
+    priority: int | None = None,
+    due_by: str | None = None,
+    overdue: bool = False,
+    today: str | None = None,
+    sort: str = "id",
 ) -> list[sqlite3.Row]:
-    """Return tasks from all projects (with project_name), optionally title-filtered."""
+    """Search tasks across projects; every filter is optional and filters combine with AND."""
+    if overdue and today is None:
+        raise ValueError("today (YYYY-MM-DD) is required when overdue=True")
+    if sort not in SORT_ORDERS:
+        raise ValueError(f"sort must be one of: {', '.join(SORT_CHOICES)}")
+
     query = (
         "SELECT tasks.*, projects.name AS project_name "
         "FROM tasks JOIN projects ON projects.id = tasks.project_id"
-        )
-    params: list[object] = []
+    )
+    conditions: list[str] = []  # fixed SQL pieces that WE wrote
+    params: list[object] = []  # the user's values, kept separate from the SQL text
+
     if text:
-        query += " WHERE tasks.title LIKE ? ESCAPE '\\'"
+        conditions.append("tasks.title LIKE ? ESCAPE '\\'")
         params.append(f"%{_escape_like(text)}%")
-    query += " ORDER BY tasks.id"
+    if project_id is not None:
+        conditions.append("tasks.project_id = ?")
+        params.append(project_id)
+    if status is not None:
+        conditions.append("tasks.status = ?")
+        params.append(status)
+    if priority is not None:
+        conditions.append("tasks.priority = ?")
+        params.append(priority)
+    if due_by is not None:
+        conditions.append("tasks.deadline <= ?")
+        params.append(due_by)
+    if overdue:
+        conditions.append("tasks.deadline < ?")
+        params.append(today)
+        conditions.append("tasks.status != 'completed'")
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY " + SORT_ORDERS[sort]
     return conn.execute(query, params).fetchall()
-        
-   
