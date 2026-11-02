@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
+from datetime import date
 
 from devtrack import repositories
 from devtrack.database import get_connection, init_db
@@ -169,6 +170,42 @@ def cmd_task_delete(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     print(f"Deleted task #{task['id']}: {task['title']}")
     return 0
 
+def cmd_task_search(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `task search`: find tasks across all projects."""
+    text = args.text.strip() if args.text else None
+    priority = parse_priority(args.priority) if args.priority else None
+    due_by = validate_deadline(args.due_by) if args.due_by else None
+    if args.project is not None and repositories.get_project(conn, args.project) is None:
+        print(f"Error: no project with id {args.project}.", file=sys.stderr)
+        return 1
+    tasks = repositories.search_tasks(
+        conn,
+        text,
+        project_id=args.project,
+        status=args.status,
+        priority=priority,
+        due_by=due_by,
+        overdue=args.overdue,
+        today=date.today().isoformat(),
+        sort=args.sort,
+    )
+    if not tasks:
+        print("No matching tasks.")
+        return 0
+    print(
+        f"{'ID':<4} {'PROJECT':<15} {'STATUS':<12} {'PRIORITY':<9} "
+        f"{'DEADLINE':<11} TITLE"
+    )
+    print("-" * 75)
+    for t in tasks:
+        priority_label = PRIORITY_NAMES.get(t["priority"], "-")
+        print(
+            f"{t['id']:<4} {t['project_name'][:15]:<15} {t['status']:<12} "
+            f"{priority_label:<9} {t['deadline'] or '-':<11} {t['title']}"
+        )
+    print(f"{len(tasks)} task(s) found.")
+    return 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with its subcommands."""
@@ -224,6 +261,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     task_edit.add_argument("--deadline", help="new due date YYYY-MM-DD, or 'none' to clear")
     task_edit.set_defaults(func=cmd_task_edit)
+    task_search = task_actions.add_parser("search", help="search tasks across all projects")
+    task_search.add_argument("text", nargs="?", help="text to look for in task titles")
+    task_search.add_argument("--project", type=positive_int, help="only this project id")
+    task_search.add_argument("--status", choices=STATUS_CHOICES, help="only this status")
+    task_search.add_argument("--priority", choices=PRIORITY_CHOICES, help="only this priority")
+    task_search.add_argument("--due-by", help="only tasks due on or before YYYY-MM-DD")
+    task_search.add_argument(
+        "--overdue", action="store_true", help="only unfinished tasks past their deadline"
+    )
+    task_search.add_argument(
+        "--sort", choices=repositories.SORT_CHOICES, default="id", help="sort order"
+    )
+    task_search.set_defaults(func=cmd_task_search)
     task_delete = task_actions.add_parser("delete", help="delete a task")
     task_delete.add_argument("task_id", type=positive_int, help="task id")
     task_delete.add_argument(

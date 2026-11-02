@@ -143,3 +143,101 @@ def test_task_edit_needs_something_to_change(capsys):
 def test_task_edit_missing_task_returns_1(capsys):
     assert main(["task", "edit", "99", "--priority", "high"]) == 1
     assert "no task with id 99" in capsys.readouterr().err
+
+
+def _seed_for_search():
+    main(["project", "add", "Alpha"])
+    main(["project", "add", "Beta"])
+    main(["task", "add", "1", "Fix login bug", "--priority", "high", "--deadline", "2000-01-01"])
+    main(["task", "add", "1", "Write docs", "--priority", "low", "--deadline", "2999-01-01"])
+    main(["task", "add", "2", "Deploy app", "--priority", "high", "--deadline", "2000-06-01"])
+    main(["task", "add", "2", "Old finished job", "--deadline", "2000-02-01"])
+    main(["task", "status", "4", "completed"])
+
+
+def test_search_finds_tasks_across_projects_with_project_names(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "app"]) == 0
+    out = capsys.readouterr().out
+    assert "Deploy app" in out and "Beta" in out
+    assert "1 task(s) found." in out
+
+
+def test_search_without_arguments_lists_every_task(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search"]) == 0
+    assert "4 task(s) found." in capsys.readouterr().out
+
+
+def test_search_filters_by_priority_and_project(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "--priority", "high", "--project", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "Deploy app" in out
+    assert "Fix login bug" not in out  # wrong project
+    assert "Old finished job" not in out  # right project, but not high priority
+    assert "1 task(s) found." in out
+
+
+def test_search_overdue_excludes_completed_and_future(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "--overdue"]) == 0
+    out = capsys.readouterr().out
+    assert "Fix login bug" in out and "Deploy app" in out
+    assert "Write docs" not in out and "Old finished job" not in out
+
+
+def test_search_sort_by_deadline_orders_output(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    main(["task", "search", "--sort", "deadline"])
+    out = capsys.readouterr().out
+    assert out.index("Fix login bug") < out.index("Old finished job") < out.index("Deploy app")
+    assert out.index("Deploy app") < out.index("Write docs")
+
+
+def test_search_with_no_matches_prints_message_and_returns_0(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "zzz"]) == 0
+    assert "No matching tasks." in capsys.readouterr().out
+
+
+def test_search_unknown_project_returns_1(capsys):
+    assert main(["task", "search", "--project", "99"]) == 1
+    assert "no project with id 99" in capsys.readouterr().err
+
+
+def test_search_bad_due_by_returns_1(capsys):
+    assert main(["task", "search", "--due-by", "2026-02-30"]) == 1
+    assert "YYYY-MM-DD" in capsys.readouterr().err
+
+
+def test_search_due_by_filters(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "--due-by", "2000-03-01"]) == 0
+    out = capsys.readouterr().out
+    assert "Fix login bug" in out and "Old finished job" in out
+    assert "Write docs" not in out
+
+
+def test_search_bad_sort_is_usage_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["task", "search", "--sort", "nope"])
+    assert exc.value.code == 2
+    assert "argument --sort" in capsys.readouterr().err
+
+
+def test_search_filters_by_status(capsys):
+    _seed_for_search()
+    capsys.readouterr()
+    assert main(["task", "search", "--status", "completed"]) == 0
+    out = capsys.readouterr().out
+    assert "Old finished job" in out
+    assert "Fix login bug" not in out
+    assert "1 task(s) found." in out
