@@ -173,3 +173,51 @@ def search_tasks(
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY " + SORT_ORDERS[sort]
     return conn.execute(query, params).fetchall()
+
+
+def start_session(
+    conn: sqlite3.Connection,
+    project_id: int,
+    task_id: int | None,
+    started_at: str,
+) -> int:
+    """Insert a running session and return its id (IntegrityError if one is already active)."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO sessions (project_id, task_id, started_at) VALUES (?, ?, ?)",
+            (project_id, task_id, started_at),
+        )
+    return cursor.lastrowid
+
+
+def get_active_session(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """Return the running session (with project name and task title), or None."""
+    return conn.execute(
+        "SELECT sessions.*, projects.name AS project_name, tasks.title AS task_title "
+        "FROM sessions "
+        "JOIN projects ON projects.id = sessions.project_id "
+        "LEFT JOIN tasks ON tasks.id = sessions.task_id "
+        "WHERE sessions.ended_at IS NULL"
+    ).fetchone()
+
+
+def stop_session(conn: sqlite3.Connection, session_id: int, ended_at: str) -> bool:
+    """End a RUNNING session; True if it was stopped, False if missing or already stopped."""
+    with conn:
+        cursor = conn.execute(
+            "UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+            (ended_at, session_id),
+        )
+    return cursor.rowcount > 0
+
+
+def list_sessions(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
+    """Return the most recent sessions first, with project name and task title."""
+    return conn.execute(
+        "SELECT sessions.*, projects.name AS project_name, tasks.title AS task_title "
+        "FROM sessions "
+        "JOIN projects ON projects.id = sessions.project_id "
+        "LEFT JOIN tasks ON tasks.id = sessions.task_id "
+        "ORDER BY sessions.started_at DESC, sessions.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()

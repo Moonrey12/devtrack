@@ -105,3 +105,32 @@ def test_failed_migration_changes_nothing(tmp_path, monkeypatch):
     assert get_schema_version(conn) == version_before
     assert "extra" not in column_names(conn, "tasks")
     conn.close()
+
+def test_sessions_table_exists_with_expected_columns(conn):
+    assert column_names(conn, "sessions") == [
+        "id", "project_id", "task_id", "started_at", "ended_at",
+    ]
+
+
+def test_upgrade_from_version_2_keeps_data_and_adds_sessions(tmp_path):
+    from devtrack import database
+
+    db_file = tmp_path / "v2.db"
+    old = sqlite3.connect(db_file)
+    for script in database.MIGRATIONS[:2]:
+        old.executescript(script)
+    old.execute("PRAGMA user_version = 2")
+    old.execute("INSERT INTO projects (name) VALUES ('Kept')")
+    old.execute("INSERT INTO tasks (project_id, title, priority) VALUES (1, 'Kept task', 3)")
+    old.commit()
+    old.close()
+
+    conn = get_connection(db_file)
+    init_db(conn)
+
+    assert get_schema_version(conn) == LATEST_VERSION
+    assert "sessions" in [
+        row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    ]
+    assert conn.execute("SELECT priority FROM tasks").fetchone()["priority"] == 3
+    conn.close()

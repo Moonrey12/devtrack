@@ -34,6 +34,22 @@ MIGRATIONS: list[str] = [
         CHECK (priority IN (1, 2, 3));
     ALTER TABLE tasks ADD COLUMN deadline TEXT;
     """,
+    # Version 3: coding sessions (times are UTC ISO-8601 text; ended_at is NULL while running).
+    """
+    CREATE TABLE sessions (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL
+                   REFERENCES projects(id) ON DELETE CASCADE,
+        task_id    INTEGER
+                   REFERENCES tasks(id) ON DELETE SET NULL,
+        started_at TEXT NOT NULL,
+        ended_at   TEXT,
+        CHECK (ended_at IS NULL OR ended_at >= started_at)
+    );
+
+    -- At most ONE row may have ended_at = NULL (one active session at a time).
+    CREATE UNIQUE INDEX one_active_session ON sessions ((1)) WHERE ended_at IS NULL;
+    """,
 ]
 
 LATEST_VERSION = len(MIGRATIONS)

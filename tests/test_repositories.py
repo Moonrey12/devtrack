@@ -264,3 +264,108 @@ def test_search_rejects_unknown_sort(conn, bad_sort):
     with pytest.raises(ValueError):
         repositories.search_tasks(conn, sort=bad_sort)
 
+T0 = "2026-11-02T09:00:00+00:00"
+T1 = "2026-11-02T10:30:00+00:00"
+T2 = "2026-11-02T11:00:00+00:00"
+
+
+def test_start_session_then_it_is_active(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    session_id = repositories.start_session(conn, project_id, None, T0)
+    active = repositories.get_active_session(conn)
+    assert active["id"] == session_id
+    assert active["project_name"] == "P"
+    assert active["started_at"] == T0
+    assert active["ended_at"] is None
+    assert active["task_title"] is None
+
+
+def test_no_active_session_returns_none(conn):
+    assert repositories.get_active_session(conn) is None
+
+
+def test_stop_session_records_end_time_and_clears_active(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    session_id = repositories.start_session(conn, project_id, None, T0)
+    assert repositories.stop_session(conn, session_id, T1) is True
+    assert repositories.get_active_session(conn) is None
+    stored = repositories.list_sessions(conn)[0]
+    assert (stored["started_at"], stored["ended_at"]) == (T0, T1)
+
+
+def test_database_allows_only_one_active_session(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    repositories.start_session(conn, project_id, None, T0)
+    with pytest.raises(sqlite3.IntegrityError):
+        repositories.start_session(conn, project_id, None, T1)
+
+
+def test_new_session_allowed_after_previous_one_stopped(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    first = repositories.start_session(conn, project_id, None, T0)
+    repositories.stop_session(conn, first, T1)
+    second = repositories.start_session(conn, project_id, None, T1)
+    assert second != first
+
+
+def test_stop_session_twice_or_missing_returns_false(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    session_id = repositories.start_session(conn, project_id, None, T0)
+    assert repositories.stop_session(conn, session_id, T1) is True
+    assert repositories.stop_session(conn, session_id, T2) is False
+    assert repositories.stop_session(conn, 999, T2) is False
+    # The original end time was not overwritten by the second stop.
+    assert repositories.list_sessions(conn)[0]["ended_at"] == T1
+
+
+def test_session_cannot_end_before_it_started(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    session_id = repositories.start_session(conn, project_id, None, T1)
+    with pytest.raises(sqlite3.IntegrityError):
+        repositories.stop_session(conn, session_id, T0)
+
+
+def test_session_for_missing_project_raises(conn):
+    with pytest.raises(sqlite3.IntegrityError):
+        repositories.start_session(conn, 999, None, T0)
+
+
+def test_deleting_a_task_keeps_its_session_but_forgets_the_task(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    task_id = repositories.add_task(conn, project_id, "Temp task")
+    session_id = repositories.start_session(conn, project_id, task_id, T0)
+    repositories.stop_session(conn, session_id, T1)
+    assert repositories.delete_task(conn, task_id) is True
+    kept = repositories.list_sessions(conn)
+    assert len(kept) == 1
+    assert kept[0]["task_id"] is None
+    assert kept[0]["task_title"] is None
+
+
+def test_deleting_a_project_deletes_its_sessions(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    session_id = repositories.start_session(conn, project_id, None, T0)
+    repositories.stop_session(conn, session_id, T1)
+    with conn:
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    assert repositories.list_sessions(conn) == []
+
+
+def test_list_sessions_newest_first_with_task_title(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    task_id = repositories.add_task(conn, project_id, "Write code")
+    first = repositories.start_session(conn, project_id, None, T0)
+    repositories.stop_session(conn, first, T1)
+    second = repositories.start_session(conn, project_id, task_id, T1)
+    repositories.stop_session(conn, second, T2)
+    found = repositories.list_sessions(conn)
+    assert [row["id"] for row in found] == [second, first]
+    assert found[0]["task_title"] == "Write code"
+
+
+def test_list_sessions_respects_limit(conn):
+    project_id = repositories.add_project(conn, "P", None, None)
+    for i in range(3):
+        sid = repositories.start_session(conn, project_id, None, f"2026-11-0{i+1}T09:00:00+00:00")
+        repositories.stop_session(conn, sid, f"2026-11-0{i+1}T10:00:00+00:00")
+    assert len(repositories.list_sessions(conn, limit=2)) == 2
