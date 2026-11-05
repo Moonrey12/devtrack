@@ -4,12 +4,13 @@ import argparse
 import os
 import sqlite3
 import sys
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 
-from devtrack import repositories
+from devtrack import repositories, services
 from devtrack.database import get_connection, init_db
-
+from devtrack.services import ServiceError
+from devtrack.timeutils import format_duration, format_local, utc_now
 from devtrack.validators import (
     PRIORITY_NAMES,
     ValidationError,
@@ -206,6 +207,61 @@ def cmd_task_search(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     print(f"{len(tasks)} task(s) found.")
     return 0
 
+def cmd_session_start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `session start`."""
+    now = utc_now()
+    services.start_session(conn, args.project_id, args.task, now)
+    session = services.current_session(conn, now)
+    task = f" (task: {session.task_title})" if session.task_title else ""
+    print(
+        f"Started session on '{session.project_name}'{task} "
+        f"at {format_local(session.started_at)}."
+    )
+    return 0
+
+
+def cmd_session_stop(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `session stop`."""
+    record = services.stop_session(conn, utc_now())
+    print(
+        f"Stopped session on '{record.project_name}'. "
+        f"Worked {format_duration(record.seconds)} "
+        f"({format_local(record.started_at)} to {format_local(record.ended_at)})."
+    )
+    return 0
+
+
+def cmd_session_status(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `session status`."""
+    record = services.current_session(conn, utc_now())
+    if record is None:
+        print("No session is running.")
+        return 0
+    task = f" (task: {record.task_title})" if record.task_title else ""
+    print(
+        f"Running on '{record.project_name}'{task} since "
+        f"{format_local(record.started_at)}: {format_duration(record.seconds)} so far."
+    )
+    return 0
+
+
+def cmd_session_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `session list`."""
+    records = services.recent_sessions(conn, utc_now(), args.limit)
+    if not records:
+        print("No sessions yet. Start one with: devtrack session start PROJECT_ID")
+        return 0
+    print(f"{'ID':<4} {'PROJECT':<15} {'TASK':<20} {'STARTED':<17} DURATION")
+    print("-" * 70)
+    for r in records:
+        duration = format_duration(r.seconds) + (" (running)" if r.running else "")
+        task = (r.task_title or "-")[:20]
+        print(
+            f"{r.id:<4} {r.project_name[:15]:<15} {task:<20} "
+            f"{format_local(r.started_at):<17} {duration}"
+        )
+    return 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with its subcommands."""
@@ -281,6 +337,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     task_delete.set_defaults(func=cmd_task_delete)
 
+    session = subparsers.add_parser("session", help="track coding sessions")
+    session.set_defaults(parser=session, func=None)
+    session_actions = session.add_subparsers(dest="action")
+
+    session_start = session_actions.add_parser("start", help="start a session on a project")
+    session_start.add_argument("project_id", type=positive_int, help="project id")
+    session_start.add_argument("--task", type=positive_int, help="optional task id (same project)")
+    session_start.set_defaults(func=cmd_session_start)
+
+    session_stop = session_actions.add_parser("stop", help="stop the running session")
+    session_stop.set_defaults(func=cmd_session_stop)
+
+    session_status = session_actions.add_parser("status", help="show the running session")
+    session_status.set_defaults(func=cmd_session_status)
+
+    session_list = session_actions.add_parser("list", help="list recent sessions")
+    session_list.add_argument("--limit", type=positive_int, default=20, help="how many to show")
+    session_list.set_defaults(func=cmd_session_list)
+
     return parser
 
 
@@ -301,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
             return args.func(args, conn)
         finally:
             conn.close()
-    except ValidationError as error:
+    except (ValidationError, ServiceError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
     except sqlite3.Error as error:

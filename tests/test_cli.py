@@ -1,3 +1,8 @@
+from datetime import datetime, timezone
+
+import pytest
+
+from devtrack.cli import main
 import pytest
 
 from devtrack.cli import main
@@ -241,3 +246,123 @@ def test_search_filters_by_status(capsys):
     assert "Old finished job" in out
     assert "Fix login bug" not in out
     assert "1 task(s) found." in out
+
+def _at(monkeypatch, hour, minute=0):
+    """Freeze the CLI's clock at 2026-11-02 HH:MM UTC."""
+    moment = datetime(2026, 11, 2, hour, minute, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("devtrack.cli.utc_now", lambda: moment)
+
+
+def test_session_start_status_stop_flow(monkeypatch, capsys):
+    main(["project", "add", "Portfolio"])
+    _at(monkeypatch, 9)
+    assert main(["session", "start", "1"]) == 0
+    assert "Started session on 'Portfolio'" in capsys.readouterr().out
+
+    _at(monkeypatch, 10, 30)
+    assert main(["session", "status"]) == 0
+    status_out = capsys.readouterr().out
+    assert "Running on 'Portfolio'" in status_out and "1h 30m 0s so far" in status_out
+
+    _at(monkeypatch, 11)
+    assert main(["session", "stop"]) == 0
+    stop_out = capsys.readouterr().out
+    assert "Stopped session on 'Portfolio'" in stop_out and "Worked 2h 0m 0s" in stop_out
+
+    assert main(["session", "status"]) == 0
+    assert "No session is running." in capsys.readouterr().out
+
+
+def test_session_start_with_task_shows_task_title(monkeypatch, capsys):
+    main(["project", "add", "Portfolio"])
+    main(["task", "add", "1", "Write docs"])
+    _at(monkeypatch, 9)
+    capsys.readouterr()
+    assert main(["session", "start", "1", "--task", "1"]) == 0
+    assert "(task: Write docs)" in capsys.readouterr().out
+
+
+def test_session_start_unknown_project_returns_1(monkeypatch, capsys):
+    _at(monkeypatch, 9)
+    assert main(["session", "start", "99"]) == 1
+    assert "No project with id 99" in capsys.readouterr().err
+
+
+def test_session_start_task_from_other_project_returns_1(monkeypatch, capsys):
+    main(["project", "add", "A"])
+    main(["project", "add", "B"])
+    main(["task", "add", "2", "Not in A"])
+    _at(monkeypatch, 9)
+    capsys.readouterr()
+    assert main(["session", "start", "1", "--task", "1"]) == 1
+    assert "does not belong" in capsys.readouterr().err
+
+
+def test_session_cannot_start_twice(monkeypatch, capsys):
+    main(["project", "add", "Portfolio"])
+    _at(monkeypatch, 9)
+    assert main(["session", "start", "1"]) == 0
+    capsys.readouterr()
+    assert main(["session", "start", "1"]) == 1
+    assert "already running on 'Portfolio'" in capsys.readouterr().err
+
+
+def test_session_stop_without_running_session_returns_1(monkeypatch, capsys):
+    _at(monkeypatch, 9)
+    assert main(["session", "stop"]) == 1
+    assert "No session is running." in capsys.readouterr().err
+
+
+def test_session_list_shows_durations_and_running_marker(monkeypatch, capsys):
+    main(["project", "add", "Portfolio"])
+    _at(monkeypatch, 9)
+    main(["session", "start", "1"])
+    _at(monkeypatch, 10, 30)
+    main(["session", "stop"])
+    _at(monkeypatch, 11)
+    main(["session", "start", "1"])
+    _at(monkeypatch, 11, 20)
+    capsys.readouterr()
+    assert main(["session", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "1h 30m 0s" in out
+    assert "20m 0s (running)" in out
+    assert out.index("(running)") < out.index("1h 30m 0s")  # newest first
+
+
+def test_session_list_empty_prints_hint(monkeypatch, capsys):
+    _at(monkeypatch, 9)
+    assert main(["session", "list"]) == 0
+    assert "No sessions yet" in capsys.readouterr().out
+
+
+def test_session_list_limit(monkeypatch, capsys):
+    main(["project", "add", "Portfolio"])
+    for hour in (9, 11, 13):
+        _at(monkeypatch, hour)
+        main(["session", "start", "1"])
+        _at(monkeypatch, hour + 1)
+        main(["session", "stop"])
+    capsys.readouterr()
+    assert main(["session", "list", "--limit", "2"]) == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "Portfolio" in ln]
+    assert len(lines) == 2
+
+
+@pytest.mark.parametrize(
+    "args, argument",
+    [
+        (["session", "start", "0"], "project_id"),
+        (["session", "list", "--limit", "0"], "--limit"),
+    ],
+)
+def test_session_bad_numbers_are_usage_errors(args, argument, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(args)
+    assert exc.value.code == 2
+    assert f"argument {argument}: id must be 1 or greater" in capsys.readouterr().err
+
+
+def test_session_without_action_prints_help_and_returns_1(capsys):
+    assert main(["session"]) == 1
+    assert "usage" in capsys.readouterr().out.lower()
