@@ -1,6 +1,6 @@
 """Time helpers: times are stored as UTC ISO-8601 text and shown in local time."""
 
-from datetime import datetime, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 
 
 def utc_now() -> datetime:
@@ -47,3 +47,59 @@ def format_duration(total_seconds: int) -> str:
 def format_local(text: str, tz: tzinfo | None = None) -> str:
     """Show a stored UTC time as 'YYYY-MM-DD HH:MM' in tz (default: the computer's zone)."""
     return parse_iso(text).astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+def _local_midnight(day: date, tz: tzinfo | None) -> datetime:
+    """Return midnight at the start of `day` as an aware datetime in `tz` (None = computer's zone)."""
+    midnight = datetime(day.year, day.month, day.day)
+    if tz is None:
+        return midnight.astimezone()  # a naive time is read as the computer's local time
+    return midnight.replace(tzinfo=tz)
+
+
+def day_window(day: date, tz: tzinfo | None = None) -> tuple[datetime, datetime]:
+    """Return the UTC [start, end) window covering one local calendar day."""
+    start = _local_midnight(day, tz)
+    end = _local_midnight(day + timedelta(days=1), tz)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def week_start(day: date, first_weekday: int = 0) -> date:
+    """Return the first day of the week containing `day` (0=Monday ... 6=Sunday)."""
+    if not 0 <= first_weekday <= 6:
+        raise ValueError("first_weekday must be between 0 (Monday) and 6 (Sunday)")
+    return day - timedelta(days=(day.weekday() - first_weekday) % 7)
+
+
+def week_days(day: date, first_weekday: int = 0) -> list[date]:
+    """Return the seven dates of the week containing `day`."""
+    first = week_start(day, first_weekday)
+    return [first + timedelta(days=offset) for offset in range(7)]
+
+
+def week_window(
+    day: date, tz: tzinfo | None = None, first_weekday: int = 0
+) -> tuple[datetime, datetime]:
+    """Return the UTC [start, end) window covering the whole local week containing `day`."""
+    days = week_days(day, first_weekday)
+    return day_window(days[0], tz)[0], day_window(days[-1], tz)[1]
+
+
+def overlap_seconds(
+    start: datetime, end: datetime, window_start: datetime, window_end: datetime
+) -> int:
+    """Return whole seconds of [start, end) that fall inside [window_start, window_end)."""
+    latest_start = max(start, window_start)
+    earliest_end = min(end, window_end)
+    return max(0, int((earliest_end - latest_start).total_seconds()))
+
+
+def session_seconds_in_window(
+    started_at: str,
+    ended_at: str | None,
+    now: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> int:
+    """Seconds of a stored session inside a window; a running session counts up to `now`."""
+    end = now if ended_at is None else parse_iso(ended_at)
+    return overlap_seconds(parse_iso(started_at), end, window_start, window_end)

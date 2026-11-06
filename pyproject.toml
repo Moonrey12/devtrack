@@ -15,7 +15,7 @@ where = ["src"]
 devtrack = "devtrack.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "tzdata"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
