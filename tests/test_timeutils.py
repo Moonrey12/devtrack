@@ -11,6 +11,7 @@ from devtrack.timeutils import (
     parse_iso,
     session_seconds_in_window,
     to_iso,
+    to_sqlite_text,
     utc_now,
     week_days,
     week_start,
@@ -245,3 +246,17 @@ def test_running_session_is_cut_off_at_the_end_of_the_window():
 def test_running_session_in_the_future_of_now_counts_nothing_in_an_earlier_window():
     started = "2026-11-05T09:00:00+00:00"
     assert session_seconds_in_window(started, None, _utc(2026, 11, 5, 10), _utc(2026, 11, 4), WIN_START) == 0
+
+def test_to_sqlite_text_matches_sqlites_own_format():
+    moment = datetime(2026, 11, 5, 1, 24, 7, 999999, tzinfo=timezone.utc)
+    assert to_sqlite_text(moment) == "2026-11-05 01:24:07"
+
+
+def test_to_sqlite_text_converts_to_utc_first():
+    moment = datetime(2026, 11, 5, 9, 24, 0, tzinfo=UTC_PLUS_8)
+    assert to_sqlite_text(moment) == "2026-11-05 01:24:00"
+
+
+def test_to_sqlite_text_rejects_naive_datetime():
+    with pytest.raises(ValueError):
+        to_sqlite_text(datetime(2026, 11, 5, 9, 24, 0))

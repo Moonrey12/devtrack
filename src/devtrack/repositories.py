@@ -221,3 +221,59 @@ def list_sessions(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row
         "ORDER BY sessions.started_at DESC, sessions.id DESC LIMIT ?",
         (limit,),
     ).fetchall()
+
+
+def sessions_overlapping(
+    conn: sqlite3.Connection, window_start: str, window_end: str
+) -> list[sqlite3.Row]:
+    """Return sessions that overlap the half-open UTC window [start, end) (ISO text times)."""
+    return conn.execute(
+        "SELECT sessions.*, projects.name AS project_name "
+        "FROM sessions JOIN projects ON projects.id = sessions.project_id "
+        "WHERE sessions.started_at < ? "
+        "AND (sessions.ended_at IS NULL OR sessions.ended_at > ?) "
+        "ORDER BY sessions.started_at, sessions.id",
+        (window_end, window_start),
+    ).fetchall()
+
+
+def tasks_completed_between(
+    conn: sqlite3.Connection, start_text: str, end_text: str
+) -> list[sqlite3.Row]:
+    """Return tasks completed in [start, end); times are SQLite-style 'YYYY-MM-DD HH:MM:SS' UTC."""
+    return conn.execute(
+        "SELECT tasks.*, projects.name AS project_name "
+        "FROM tasks JOIN projects ON projects.id = tasks.project_id "
+        "WHERE tasks.status = 'completed' "
+        "AND tasks.completed_at >= ? AND tasks.completed_at < ? "
+        "ORDER BY tasks.completed_at, tasks.id",
+        (start_text, end_text),
+    ).fetchall()
+
+
+def count_tasks_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return how many tasks have each status (statuses with no tasks are 0)."""
+    counts = {"todo": 0, "in_progress": 0, "completed": 0}
+    for row in conn.execute("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status"):
+        counts[row["status"]] = row["n"]
+    return counts
+
+
+def task_counts_by_project(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return each project with its total and completed task counts (projects with 0 tasks too)."""
+    return conn.execute(
+        "SELECT projects.id, projects.name, "
+        "COUNT(tasks.id) AS total, "
+        "SUM(CASE WHEN tasks.status = 'completed' THEN 1 ELSE 0 END) AS completed "
+        "FROM projects LEFT JOIN tasks ON tasks.project_id = projects.id "
+        "GROUP BY projects.id, projects.name "
+        "ORDER BY projects.name COLLATE NOCASE, projects.id"
+    ).fetchall()
+
+
+def count_overdue_tasks(conn: sqlite3.Connection, today: str) -> int:
+    """Count unfinished tasks whose deadline (YYYY-MM-DD) is before `today`."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE deadline < ? AND status != 'completed'",
+        (today,),
+    ).fetchone()[0]

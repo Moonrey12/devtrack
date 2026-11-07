@@ -103,3 +103,9 @@ def session_seconds_in_window(
     """Seconds of a stored session inside a window; a running session counts up to `now`."""
     end = now if ended_at is None else parse_iso(ended_at)
     return overlap_seconds(parse_iso(started_at), end, window_start, window_end)
+
+def to_sqlite_text(moment: datetime) -> str:
+    """Format an aware datetime like SQLite's datetime('now'): 'YYYY-MM-DD HH:MM:SS' in UTC."""
+    if moment.tzinfo is None:
+        raise ValueError("datetime must be timezone-aware")
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
