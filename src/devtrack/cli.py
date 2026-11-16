@@ -4,22 +4,24 @@ import argparse
 import os
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime, tzinfo
 from pathlib import Path
 
-from devtrack import repositories, services
+from devtrack import formatting, reports, repositories, services
 from devtrack.database import get_connection, init_db
 from devtrack.services import ServiceError
 from devtrack.timeutils import format_duration, format_local, utc_now
 from devtrack.validators import (
     PRIORITY_NAMES,
     ValidationError,
+    parse_date,
     parse_priority,
     validate_deadline,
     validate_name,
     validate_optional_text,
     validate_title,
 )
+
 
 STATUS_CHOICES = ["todo", "in_progress", "completed"]
 
@@ -263,6 +265,40 @@ def cmd_session_list(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     return 0
 
 
+def local_timezone() -> tzinfo | None:
+    """Return the time zone used for days and weeks (None = the computer's own zone)."""
+    return None
+
+
+def _report_day(args: argparse.Namespace, now: datetime, tz: tzinfo | None) -> date:
+    """Return the day to report on: --date if given, otherwise today in the local zone."""
+    if args.date:
+        return parse_date(args.date)
+    return now.astimezone(tz).date()
+
+
+def cmd_report_daily(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `report daily`."""
+    now, tz = utc_now(), local_timezone()
+    report = reports.daily_report(conn, _report_day(args, now, tz), now, tz)
+    print(formatting.render_daily(report))
+    return 0
+
+
+def cmd_report_weekly(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `report weekly`."""
+    now, tz = utc_now(), local_timezone()
+    report = reports.weekly_report(conn, _report_day(args, now, tz), now, tz)
+    print(formatting.render_weekly(report))
+    return 0
+
+
+def cmd_report_stats(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """Handle `report stats`."""
+    print(formatting.render_stats(reports.stats_report(conn, utc_now(), local_timezone())))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with its subcommands."""
     parser = argparse.ArgumentParser(
@@ -355,6 +391,21 @@ def build_parser() -> argparse.ArgumentParser:
     session_list = session_actions.add_parser("list", help="list recent sessions")
     session_list.add_argument("--limit", type=positive_int, default=20, help="how many to show")
     session_list.set_defaults(func=cmd_session_list)
+
+    report = subparsers.add_parser("report", help="productivity reports")
+    report.set_defaults(parser=report, func=None)
+    report_actions = report.add_subparsers(dest="action")
+
+    report_daily = report_actions.add_parser("daily", help="coding time and tasks for one day")
+    report_daily.add_argument("--date", help="day as YYYY-MM-DD (default: today)")
+    report_daily.set_defaults(func=cmd_report_daily)
+
+    report_weekly = report_actions.add_parser("weekly", help="coding time and tasks for one week")
+    report_weekly.add_argument("--date", help="any day in the week, YYYY-MM-DD (default: today)")
+    report_weekly.set_defaults(func=cmd_report_weekly)
+
+    report_stats = report_actions.add_parser("stats", help="task completion statistics")
+    report_stats.set_defaults(func=cmd_report_stats)
 
     return parser
 

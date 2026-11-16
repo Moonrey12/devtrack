@@ -1,6 +1,6 @@
 """Input validation helpers: they check and clean values, never print or touch the DB."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 MAX_NAME_LENGTH = 100
 MAX_TITLE_LENGTH = 200
@@ -72,3 +72,14 @@ def validate_deadline(value: str) -> str:
             f"(got '{value}')."
         ) from None
     return parsed.isoformat()
+
+
+def parse_date(value: str) -> date:
+    """Parse a YYYY-MM-DD text into a date, or raise ValidationError."""
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        raise ValidationError(
+            f"Date must be a real date in YYYY-MM-DD format, e.g. 2026-12-31 "
+            f"(got '{value}')."
+        ) from None

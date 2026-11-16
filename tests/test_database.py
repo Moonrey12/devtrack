@@ -134,3 +134,5 @@ def test_upgrade_from_version_2_keeps_data_and_adds_sessions(tmp_path):
     ]
     assert conn.execute("SELECT priority FROM tasks").fetchone()["priority"] == 3
     conn.close()
+
+

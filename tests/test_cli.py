@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -247,9 +247,9 @@ def test_search_filters_by_status(capsys):
     assert "Fix login bug" not in out
     assert "1 task(s) found." in out
 
-def _at(monkeypatch, hour, minute=0):
-    """Freeze the CLI's clock at 2026-11-02 HH:MM UTC."""
-    moment = datetime(2026, 11, 2, hour, minute, 0, tzinfo=timezone.utc)
+def _at(monkeypatch, hour, minute=0, day=2):
+    """Freeze the CLI's clock at 2026-11-DD HH:MM UTC (default: Nov 2)."""
+    moment = datetime(2026, 11, day, hour, minute, 0, tzinfo=timezone.utc)
     monkeypatch.setattr("devtrack.cli.utc_now", lambda: moment)
 
 
@@ -366,3 +366,143 @@ def test_session_bad_numbers_are_usage_errors(args, argument, capsys):
 def test_session_without_action_prints_help_and_returns_1(capsys):
     assert main(["session"]) == 1
     assert "usage" in capsys.readouterr().out.lower()
+
+
+# ---------- reports ----------
+
+@pytest.fixture
+def utc_days(monkeypatch):
+    """Make the CLI use UTC for days and weeks, so tests do not depend on the computer's zone."""
+    monkeypatch.setattr("devtrack.cli.local_timezone", lambda: timezone.utc)
+
+
+def _worked(monkeypatch, project_id, start_hour, end_hour):
+    _at(monkeypatch, start_hour)
+    main(["session", "start", str(project_id)])
+    _at(monkeypatch, end_hour)
+    main(["session", "stop"])
+
+
+def test_report_daily_shows_time_and_projects(monkeypatch, capsys, utc_days):
+    main(["project", "add", "Portfolio"])
+    _worked(monkeypatch, 1, 9, 11)
+    _at(monkeypatch, 9, day=5)  # "today" is Nov 5, so --date really has to be honored
+    capsys.readouterr()
+    assert main(["report", "daily", "--date", "2026-11-02"]) == 0
+    out = capsys.readouterr().out
+    assert "Daily report: Monday 2026-11-02" in out
+    assert "Coding time: 2h 0m 0s in 1 session" in out
+    assert "Portfolio" in out
+
+
+def test_report_daily_defaults_to_today(monkeypatch, capsys, utc_days):
+    main(["project", "add", "Portfolio"])
+    _worked(monkeypatch, 1, 9, 10)
+    _at(monkeypatch, 15)
+    capsys.readouterr()
+    assert main(["report", "daily"]) == 0
+    out = capsys.readouterr().out
+    assert "2026-11-02" in out and "Coding time: 1h 0m 0s" in out
+
+
+def test_report_daily_for_an_empty_day(monkeypatch, capsys, utc_days):
+    _at(monkeypatch, 9)
+    assert main(["report", "daily", "--date", "2026-11-03"]) == 0
+    out = capsys.readouterr().out
+    assert "Coding time: none" in out and "Tasks completed: none" in out
+
+
+@pytest.mark.parametrize("bad", ["tomorrow", "2026-02-30", "11/02/2026"])
+def test_report_rejects_bad_dates(bad, capsys):
+    assert main(["report", "daily", "--date", bad]) == 1
+    assert "YYYY-MM-DD" in capsys.readouterr().err
+    assert main(["report", "weekly", "--date", bad]) == 1
+
+
+def test_report_daily_uses_the_configured_local_zone(monkeypatch, capsys):
+    plus_8 = timezone(timedelta(hours=8))
+    monkeypatch.setattr("devtrack.cli.local_timezone", lambda: plus_8)
+    main(["project", "add", "Portfolio"])
+    _worked(monkeypatch, 1, 17, 18)  # 01:00-02:00 on Nov 3 at UTC+8
+    capsys.readouterr()
+    main(["report", "daily", "--date", "2026-11-03"])
+    assert "Coding time: 1h 0m 0s" in capsys.readouterr().out
+    main(["report", "daily", "--date", "2026-11-02"])
+    assert "Coding time: none" in capsys.readouterr().out
+
+
+def test_report_weekly_shows_week_range_and_day_bars(monkeypatch, capsys, utc_days):
+    main(["project", "add", "Portfolio"])
+    _worked(monkeypatch, 1, 9, 11)
+    _at(monkeypatch, 9, day=12)  # "today" is in the following week
+    capsys.readouterr()
+    assert main(["report", "weekly", "--date", "2026-11-04"]) == 0
+    out = capsys.readouterr().out
+    assert "Weekly report: 2026-11-02 to 2026-11-08" in out
+    assert "Mon 11-02" in out and "#" in out
+    assert "Coding time: 2h 0m 0s" in out
+    assert main(["report", "weekly"]) == 0  # without --date it is the current week instead
+    current = capsys.readouterr().out
+    assert "2026-11-09 to 2026-11-15" in current and "Coding time: none" in current
+
+
+def test_report_weekly_defaults_to_the_current_week(monkeypatch, capsys, utc_days):
+    _at(monkeypatch, 9)
+    capsys.readouterr()
+    assert main(["report", "weekly"]) == 0
+    assert "2026-11-02 to 2026-11-08" in capsys.readouterr().out
+
+
+def test_report_stats_on_an_empty_database(monkeypatch, capsys, utc_days):
+    _at(monkeypatch, 9)
+    assert main(["report", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "Total tasks: 0" in out and "No tasks yet" in out
+
+
+def test_report_stats_with_tasks(monkeypatch, capsys, utc_days):
+    _at(monkeypatch, 9)
+    main(["project", "add", "Portfolio"])
+    main(["task", "add", "1", "One", "--deadline", "2026-11-01"])
+    main(["task", "add", "1", "Two"])
+    main(["task", "status", "2", "completed"])
+    capsys.readouterr()
+    assert main(["report", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "Total tasks: 2" in out
+    assert "(50.0% complete)" in out
+    assert "Overdue: 1" in out
+    assert "Portfolio  1/2 completed" in out
+
+
+def test_report_without_an_action_prints_help_and_returns_1(capsys):
+    assert main(["report"]) == 1
+    assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_report_stats_uses_the_configured_local_zone(monkeypatch, capsys):
+    plus_8 = timezone(timedelta(hours=8))
+    monkeypatch.setattr("devtrack.cli.local_timezone", lambda: plus_8)
+    main(["project", "add", "Portfolio"])
+    main(["task", "add", "1", "Due Nov 2", "--deadline", "2026-11-02"])
+    _at(monkeypatch, 17)  # 17:00 UTC on Nov 2 is already Nov 3 at UTC+8
+    capsys.readouterr()
+    assert main(["report", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "as of 2026-11-03" in out
+    assert "Overdue: 1" in out
+
+
+def test_report_weekly_uses_the_configured_local_zone(monkeypatch, capsys):
+    plus_8 = timezone(timedelta(hours=8))
+    monkeypatch.setattr("devtrack.cli.local_timezone", lambda: plus_8)
+    main(["project", "add", "Portfolio"])
+    _at(monkeypatch, 17, day=8)  # Sunday 17:00 UTC is already Monday 01:00 at UTC+8
+    main(["session", "start", "1"])
+    _at(monkeypatch, 18, day=8)
+    main(["session", "stop"])
+    capsys.readouterr()
+    main(["report", "weekly", "--date", "2026-11-04"])  # the week of Nov 2 - Nov 8
+    assert "Coding time: none" in capsys.readouterr().out
+    main(["report", "weekly", "--date", "2026-11-10"])  # the week of Nov 9 - Nov 15
+    assert "Coding time: 1h 0m 0s" in capsys.readouterr().out

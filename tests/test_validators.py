@@ -1,7 +1,9 @@
+from datetime import date
 import pytest
 
 from devtrack.validators import (
     ValidationError,
+    parse_date,
     parse_priority,
     validate_deadline,
     validate_name,
@@ -87,3 +89,12 @@ def test_validate_deadline_accepts_leap_day_only_in_leap_years():
     assert validate_deadline("2028-02-29") == "2028-02-29"
     with pytest.raises(ValidationError):
         validate_deadline("2027-02-29")
+
+def test_parse_date_returns_a_date():
+    assert parse_date(" 2026-11-05 ") == date(2026, 11, 5)
+
+
+@pytest.mark.parametrize("value", ["", "today", "2026-02-30", "05/11/2026", "2026-11-05 10:00"])
+def test_parse_date_rejects_bad_text(value):
+    with pytest.raises(ValidationError, match="YYYY-MM-DD"):
+        parse_date(value)
